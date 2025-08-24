@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"time"
 
@@ -11,10 +12,13 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/log/global"
+	"go.opentelemetry.io/otel/metric"
 	otellog "go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
@@ -65,16 +69,75 @@ func main() {
 		}
 	}()
 
+	// Setup metric provider
+	metricProvider, err := setupMetricProvider(ctx, endpoint, res)
+	if err != nil {
+		log.Fatalf("Failed to setup metric provider: %v", err)
+	}
+	defer func() {
+		if err := metricProvider.Shutdown(ctx); err != nil {
+			log.Printf("Error shutting down metric provider: %v", err)
+		}
+	}()
+
 	// Set global providers
 	otel.SetTracerProvider(traceProvider)
 	global.SetLoggerProvider(logProvider)
+	otel.SetMeterProvider(metricProvider)
 
-	// Get tracer and logger
+	// Get tracer, logger, and meter
 	tracer := otel.Tracer(serviceName)
 	logger := global.GetLoggerProvider().Logger(serviceName)
+	meter := otel.Meter(serviceName)
 
-	// Demonstrate tracing and logging
+	// Demonstrate tracing, logging, and metrics
 	fmt.Println("Starting OpenTelemetry demo...")
+	
+	// Create metrics
+	requestCounter, err := meter.Int64Counter(
+		"requests_total",
+		metric.WithDescription("Total number of requests"),
+		metric.WithUnit("1"),
+	)
+	if err != nil {
+		log.Fatalf("Failed to create counter: %v", err)
+	}
+
+	requestDuration, err := meter.Float64Histogram(
+		"request_duration_seconds",
+		metric.WithDescription("Duration of requests"),
+		metric.WithUnit("s"),
+	)
+	if err != nil {
+		log.Fatalf("Failed to create histogram: %v", err)
+	}
+
+	activeConnections, err := meter.Int64UpDownCounter(
+		"active_connections",
+		metric.WithDescription("Number of active connections"),
+		metric.WithUnit("1"),
+	)
+	if err != nil {
+		log.Fatalf("Failed to create up-down counter: %v", err)
+	}
+
+	// Create a gauge callback for memory usage
+	_, err = meter.Int64ObservableGauge(
+		"memory_usage_bytes",
+		metric.WithDescription("Current memory usage"),
+		metric.WithUnit("By"),
+		metric.WithInt64Callback(func(ctx context.Context, observer metric.Int64Observer) error {
+			// Simulate memory usage
+			memUsage := int64(1024 * 1024 * (50 + rand.Intn(50))) // 50-100 MB
+			observer.Observe(memUsage, metric.WithAttributes(
+				attribute.String("memory_type", "heap"),
+			))
+			return nil
+		}),
+	)
+	if err != nil {
+		log.Fatalf("Failed to create gauge: %v", err)
+	}
 	
 	// Create a root span
 	ctx, rootSpan := tracer.Start(ctx, "main-operation",
@@ -89,8 +152,8 @@ func main() {
 		otellog.String("component", "main"),
 		otellog.String("operation", "start"))
 
-	// Simulate some work with nested spans
-	if err := simulateWork(ctx, tracer, logger); err != nil {
+	// Simulate some work with nested spans and metrics
+	if err := simulateWork(ctx, tracer, logger, requestCounter, requestDuration, activeConnections); err != nil {
 		rootSpan.SetStatus(codes.Error, err.Error())
 		
 		// Log the error
@@ -106,10 +169,10 @@ func main() {
 			otellog.String("operation", "complete"))
 	}
 
-	fmt.Println("Demo completed. Check your OpenTelemetry collector for traces and logs!")
+	fmt.Println("Demo completed. Check your OpenTelemetry collector for traces, logs, and metrics!")
 
 	// Give some time for exports to complete
-	time.Sleep(2 * time.Second)
+	time.Sleep(5 * time.Second)
 }
 
 // Helper function to create and emit log records
@@ -182,7 +245,50 @@ func setupLogProvider(ctx context.Context, endpoint string, res *resource.Resour
 	return logProvider, nil
 }
 
-func simulateWork(ctx context.Context, tracer trace.Tracer, logger otellog.Logger) error {
+func setupMetricProvider(ctx context.Context, endpoint string, res *resource.Resource) (*sdkmetric.MeterProvider, error) {
+	// Create OTLP metric exporter
+	conn, err := grpc.DialContext(ctx, endpoint,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithBlock(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create gRPC connection: %w", err)
+	}
+
+	metricExporter, err := otlpmetricgrpc.New(ctx, otlpmetricgrpc.WithGRPCConn(conn))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create metric exporter: %w", err)
+	}
+
+	// Create metric provider
+	metricProvider := sdkmetric.NewMeterProvider(
+		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(metricExporter,
+			sdkmetric.WithInterval(10*time.Second))), // Export every 10 seconds
+		sdkmetric.WithResource(res),
+	)
+
+	return metricProvider, nil
+}
+
+func simulateWork(ctx context.Context, tracer trace.Tracer, logger otellog.Logger, 
+	requestCounter metric.Int64Counter, requestDuration metric.Float64Histogram, 
+	activeConnections metric.Int64UpDownCounter) error {
+	
+	// Increment active connections
+	activeConnections.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("connection_type", "database"),
+	))
+	defer activeConnections.Add(ctx, -1, metric.WithAttributes(
+		attribute.String("connection_type", "database"),
+	))
+
+	// Record request start
+	requestStart := time.Now()
+	requestCounter.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("method", "GET"),
+		attribute.String("endpoint", "/api/users"),
+		attribute.String("status", "processing"),
+	))
 	// Create a child span for database operation
 	ctx, dbSpan := tracer.Start(ctx, "database-query",
 		trace.WithAttributes(
@@ -198,13 +304,28 @@ func simulateWork(ctx context.Context, tracer trace.Tracer, logger otellog.Logge
 		otellog.String("query", "SELECT * FROM users WHERE id = ?"))
 
 	// Simulate database work
-	time.Sleep(100 * time.Millisecond)
+	dbDuration := time.Duration(80+rand.Intn(40)) * time.Millisecond
+	time.Sleep(dbDuration)
+
+	// Record database metrics
+	requestDuration.Record(ctx, dbDuration.Seconds(), metric.WithAttributes(
+		attribute.String("operation", "database_query"),
+		attribute.String("db.system", "postgresql"),
+	))
 
 	// Add some attributes to the span
 	dbSpan.SetAttributes(
 		attribute.Int("db.rows_affected", 1),
-		attribute.String("db.query_time", "100ms"),
+		attribute.String("db.query_time", fmt.Sprintf("%.0fms", dbDuration.Seconds()*1000)),
 	)
+
+	// Increment active connections for API call
+	activeConnections.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("connection_type", "http_client"),
+	))
+	defer activeConnections.Add(ctx, -1, metric.WithAttributes(
+		attribute.String("connection_type", "http_client"),
+	))
 
 	// Create another child span for API call
 	ctx, apiSpan := tracer.Start(ctx, "external-api-call",
@@ -221,19 +342,43 @@ func simulateWork(ctx context.Context, tracer trace.Tracer, logger otellog.Logge
 		otellog.String("method", "GET"))
 
 	// Simulate API call
-	time.Sleep(200 * time.Millisecond)
+	apiDuration := time.Duration(150+rand.Intn(100)) * time.Millisecond
+	time.Sleep(apiDuration)
+
+	// Record API metrics
+	requestDuration.Record(ctx, apiDuration.Seconds(), metric.WithAttributes(
+		attribute.String("operation", "api_call"),
+		attribute.String("http.method", "GET"),
+		attribute.Int("http.status_code", 200),
+	))
 
 	// Simulate success
 	apiSpan.SetAttributes(
 		attribute.Int("http.status_code", 200),
-		attribute.String("http.response_time", "200ms"),
+		attribute.String("http.response_time", fmt.Sprintf("%.0fms", apiDuration.Seconds()*1000)),
 	)
 
 	// Log successful API response
 	logRecord(ctx, logger, "API call completed successfully", otellog.SeverityInfo,
 		otellog.String("component", "api-client"),
 		otellog.Int("status_code", 200),
-		otellog.String("response_time", "200ms"))
+		otellog.String("response_time", fmt.Sprintf("%.0fms", apiDuration.Seconds()*1000)))
+
+	// Record final request metrics
+	totalDuration := time.Since(requestStart)
+	requestDuration.Record(ctx, totalDuration.Seconds(), metric.WithAttributes(
+		attribute.String("operation", "total_request"),
+		attribute.String("method", "GET"),
+		attribute.String("endpoint", "/api/users"),
+		attribute.String("status", "success"),
+	))
+
+	// Update request counter with final status
+	requestCounter.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("method", "GET"),
+		attribute.String("endpoint", "/api/users"),
+		attribute.String("status", "success"),
+	))
 
 	return nil
 }
