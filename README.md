@@ -1,14 +1,14 @@
 Local ClickStack Setup Guide
 ==================
 
-The [ClickStack](https://clickhouse.com/use-cases/observability) documentation is pretty good about telling you what to do as long as your deployment use case scenario fits directly into one of [it's six options here](https://clickhouse.com/docs/use-cases/observability/clickstack/deployment).
+The [ClickStack](https://clickhouse.com/use-cases/observability) documentation is pretty good about telling you what to do as long as your deployment use case scenario fits directly into one of [it's six options here](https://clickhouse.com/docs/use-cases/observability/clickstack/deployment). This README outlines how to configure a *local* ClickStack instance using a mixture of the [Local Mode Only deployment](https://clickhouse.com/docs/use-cases/observability/clickstack/deployment/local-mode-only) and the [HyperDX only deployment](https://clickhouse.com/docs/use-cases/observability/clickstack/deployment/hyperdx-only) options. 
 
-This guide outlines how to configure a *local* ClickStack instance with a client program to provide example input telemetry.
+It also includes a client program written in Go to provide example input telemetry.
 
 Running Clickhouse
 ------------------
 
-Installed clickhouse using:
+Install clickhouse using homebrew:
 `brew install clickhouse`
 
 This installs the DB server at: `/usr/local/bin/clickhouse`<br/>
