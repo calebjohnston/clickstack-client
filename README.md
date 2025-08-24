@@ -1,7 +1,7 @@
 Local ClickStack Setup Guide
 ==================
 
-The ClickStack documentation is pretty good about telling you what to do as long as your deployment use case scenario fits directly into one of it's six options here: https://clickhouse.com/docs/use-cases/observability/clickstack/deployment
+The ClickStack documentation is pretty good about telling you what to do as long as your deployment use case scenario fits directly into one of [it's six options here](https://clickhouse.com/docs/use-cases/observability/clickstack/deployment).
 
 This guide outlines how to configure a *local* ClickStack instance with a client program to provide example input telemetry.
 
@@ -11,17 +11,17 @@ Running Clickhouse
 Installed clickhouse using:
 `brew install clickhouse`
 
-This installed the DB server at: `/usr/local/bin/clickhouse`
-Which simlinks to: `/usr/local/Caskroom/clickhouse/25.7.4.11-stable/clickhouse-macos`
+This installs the DB server at: `/usr/local/bin/clickhouse`<br/>
+Which symlinks to: `/usr/local/Caskroom/clickhouse/<version-variant>/clickhouse-macos`
 
 The clickhouse binary can be started as a client, server, or repl:
 - client: `$ clickhouse client`
 - server: `$ clickhouse server`
 - repl: `$ clickhouse`
 
-The clickhouse server hosts at a TCP socket at port 9000. You can verify that it's up using liof
+The clickhouse server hosts a TCP socket at port 9000. Verify that it's up using `lsof -i :9000`
 
-To inspect tables, run `clickhouse client` and then run `SHOW TABLES` which should produce output like this once in use:
+To inspect tables, run `clickhouse client` and then run `SHOW TABLES` which should produce output as follows (after OpenTelemetry is configured):
 ```
 SHOW TABLES
 
@@ -42,28 +42,32 @@ Query id: 590a2489-c958-4e07-83bb-e730698c867d
 9 rows in set. Elapsed: 0.004 sec.
 ```
 
-Then run `DESCRIBE <insert-table-name>` to get a summary of the table.
+Then run `DESCRIBE <insert-table-name>` to get a summary of each table.
 
 
 
 Running OpenTelemetry
 ------------------
 
-Installing an OpenTelemetry collector was more painful. You cannot just use bare-bones OpenTelemetry. You need to use OpenTelemetry with the modules that support your database. In this case, that's clickhouse.
+Installing an OpenTelemetry collector was less straightforward using publicly available documentation. You cannot just use bare-bones OpenTelemetry. You need to use OpenTelemetry with the modules that support your database. In this case, that's clickhouse.
 
-This means you should install from: https://github.com/open-telemetry/opentelemetry-collector-contrib
-And **NOT** from: https://github.com/open-telemetry/opentelemetry-collector/
+This means you should install from [opentelemetry-collector-contrib](https://github.com/open-telemetry/opentelemetry-collector-contrib)
+And **NOT** from [opentelemetry-collector](https://github.com/open-telemetry/opentelemetry-collector/).
 
 Fortunately, clickhouse support is already there: https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/exporter/clickhouseexporter
 
-The best way to install is to build from source using the following instructions: 
+The easiest way to install is to build from source using the following instructions: 
 ```
 $ git checkout https://github.com/open-telemetry/opentelemetry-collector-contrib.git
 $ cd opentelemetry-collector-contrib
 $ make otelcontribcol
 ```
 
-This will generate a binary at `bin/otelcontribcol_darwin_amd64` on an Apple Silicon Mac.
+This will generate a binary at `bin/otelcontribcol_darwin_amd64` on an Apple Silicon Mac. 
+
+> 
+> **NOTE:** this build will include all of the 3rd party components which makes the binary quite large (500Mb for me). You can use [OpenTelemetry Collector Builder (ocb)](https://github.com/open-telemetry/opentelemetry-collector/tree/main/cmd/builder) to avoid that. But I didn't do that.
+> 
 
 This binary requires an input configuration file. To configure the OpenTelemetry collector to use clickhouse, you need to supply a YAML file as follows:
 ```
@@ -100,7 +104,9 @@ service:
       exporters: [clickhouse]
 ```
 
-Now this OpenTelemetry collector will host HTTP and gRPC APIs. The HTTP API is hosted on port 4318. The gRPC API is hosted on port 4317.
+Now use `otelcontribcol_darwin_amd64 --config otel-clickhouse.yaml` to start the collector. 
+
+This OpenTelemetry collector will host HTTP and gRPC APIs. The HTTP API is hosted on port 4318. The gRPC API is hosted on port 4317.
 
 
 Running HyperDX
@@ -115,7 +121,8 @@ $ yarn run app:dev:local
 ```
 
 This will run HyperDX in local mode. Local mode will store all of the user configuration in local storage instead of in MongoDB. But that also means your dashboards will get wiped up restarting the app.
-This will host the HyperDX web app at: http://localhost:8080
+
+This will host the HyperDX web app at: http://localhost:8080 <br/>
 The HyperDX API will be at: http://localhost:8123
 
 
@@ -126,6 +133,10 @@ You can use `otel-cli` to write spans to the open telemetry collector as follows
 otel-cli span --name test-span --endpoint http://localhost:4318/v1/traces
 ```
 
-This tool doesn't support metrics or logs. So, it's just way easier to use an SDK. That's what's been done in this repo using the Go SDK.
-
+This CLI tool doesn't support metrics or logs. So, it's just way easier to use an SDK. The example Go program in this repo does just that. To try it out, just run the following:
+```
+$ go mod download
+$ go mod tidy
+$ go run main.go
+```
 
