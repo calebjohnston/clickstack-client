@@ -66,7 +66,7 @@ $ make otelcontribcol
 This will generate a binary at `bin/otelcontribcol_darwin_amd64` on an Apple Silicon Mac. 
 
 > 
-> **NOTE:** this build will include all of the 3rd party components which makes the binary quite large (500Mb for me). You can use [OpenTelemetry Collector Builder (ocb)](https://github.com/open-telemetry/opentelemetry-collector/tree/main/cmd/builder) to avoid that. But I didn't do that.
+> **NOTE:** this build will include all of the 3rd party components which makes the binary quite large (500Mb for me). You can use [OpenTelemetry Collector Builder (ocb)](https://opentelemetry.io/docs/collector/custom-collector/) to avoid that. But I didn't do that.
 > 
 
 This binary requires an input configuration file. To configure the OpenTelemetry collector to use clickhouse, you need to supply a YAML file as follows:
