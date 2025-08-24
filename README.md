@@ -1,6 +1,10 @@
 Local ClickStack Setup Guide
 ==================
 
+The ClickStack documentation is pretty good about telling you what to do as long as your deployment use case scenario fits directly into one of it's six options here: https://clickhouse.com/docs/use-cases/observability/clickstack/deployment
+
+This guide outlines how to configure a *local* ClickStack instance with a client program to provide example input telemetry.
+
 Running Clickhouse
 ------------------
 
